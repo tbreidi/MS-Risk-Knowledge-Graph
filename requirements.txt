@@ -1,0 +1,11 @@
+requests~=2.32.3
+torch~=2.2.2
+Bio~=1.7.1
+tqdm~=4.67.0
+scholarly[tor]~=1.7.11
+biopython~=1.84
+transformers~=4.46.2
+datasets~=3.1.0
+networkx~=3.4.2
+matplotlib
+python-dotenv

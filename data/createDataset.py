@@ -1,14 +1,16 @@
 import os
+from dotenv import load_dotenv
 import time
 import json
 import logging
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 import requests
 import xml.etree.ElementTree as ET
 from tqdm import tqdm
 from Bio import Entrez
+from bs4 import BeautifulSoup
 
 # --------------------------- Configuration ---------------------------
 
@@ -18,31 +20,35 @@ logging.basicConfig(
     level=logging.INFO,              # Logging level
     format='%(asctime)s - %(levelname)s - %(message)s'  # Log format
 )
+logger = logging.getLogger()
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Entrez Email (Required)
-Entrez.email = "your_email@example.com"  # Replace with your actual email
+Entrez.email = os.getenv("ENTREZ_EMAIL")  # Replace with your actual email
 
 # Entrez API Key (Optional but recommended)
 Entrez.api_key = os.getenv("ENTREZ_API_KEY")  # Set as environment variable if available
 
 # Rate Limiting
 ENTREZ_RATE_LIMIT = 3  # Max 3 requests per second as per NCBI guidelines
-EUROPE_PMC_RATE_LIMIT = 10  # Max 10 requests per second as per Europe PMC guidelines
-OPENALEX_RATE_LIMIT = 50  # Max 50 requests per second as per OpenAlex guidelines
 
 # Sleep intervals based on rate limits
 ENTREZ_SLEEP_INTERVAL = 1 / ENTREZ_RATE_LIMIT
-EUROPE_PMC_SLEEP_INTERVAL = 1 / EUROPE_PMC_RATE_LIMIT
-OPENALEX_SLEEP_INTERVAL = 1 / OPENALEX_RATE_LIMIT
 
 # Batch size for fetching PubMed articles
 PUBMED_BATCH_SIZE = 200
 
 # Maximum number of articles to fetch
-MAX_RESULTS = 525  # Adjust as needed
+MAX_RESULTS = 1000  # Adjust as needed
 
-# OpenAlex API endpoint
-OPENALEX_BASE_URL = "https://api.openalex.org/works/"
+# ScraperAPI Key (Set your actual ScraperAPI key here)
+SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")  # Replace with your ScraperAPI key
+SCRAPER_API_BASE_URL = f"http://api.scraperapi.com/?api_key={SCRAPER_API_KEY}&url="
+
+# PubMed EFetch base URL
+PUBMED_FETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 
 # ---------------------------------------------------------------------
 
@@ -55,7 +61,7 @@ def search_pubmed(query: str, max_results: int = 525) -> List[str]:
     search_params = {
         "db": "pubmed",
         "term": query,
-        "retmax": max_results,  # Set to desired number of results
+        "retmax": max_results,
         "retmode": "xml",
         "datetype": "pdat",
         "mindate": f"{datetime.now().year - 5}/01/01",
@@ -82,6 +88,73 @@ def search_pubmed(query: str, max_results: int = 525) -> List[str]:
     except ET.ParseError as e:
         logging.error(f"Error parsing PubMed search XML: {e}")
         return []
+
+def extract_doi_from_pubmed(pmid):
+    """
+    Extract DOI from PubMed for the given PMID.
+    """
+    try:
+        fetch_params = {
+            "db": "pubmed",
+            "id": pmid,
+            "retmode": "xml"
+        }
+
+        logger.info(f"Fetching DOI for PMID: {pmid}")
+        response = requests.get(PUBMED_FETCH_URL, params=fetch_params)
+        response.raise_for_status()
+
+        fetch_tree = ET.fromstring(response.content)
+        doi = None
+
+        # Extract DOI from MedlineCitation
+        article_ids = fetch_tree.findall(".//ArticleIdList/ArticleId")
+        for aid in article_ids:
+            if aid.attrib.get("IdType") == "doi":
+                doi = aid.text.strip()
+                break
+
+        if doi:
+            logger.info(f"DOI for PMID {pmid}: {doi}")
+        else:
+            logger.warning(f"No DOI found for PMID {pmid}.")
+        return doi
+    except Exception as e:
+        logger.error(f"Error extracting DOI for PMID {pmid}: {e}")
+        return None
+
+def fetch_citation_count(pmid):
+    """
+    Fetch the citation count for the given PMID from Google Scholar using ScraperAPI.
+    """
+    try:
+        # Construct the Google Scholar query URL
+        query_url = f"https://scholar.google.com/scholar?hl=en&q=pmid+{pmid}&btnG="
+        scraper_url = f"{SCRAPER_API_BASE_URL}{query_url}"
+
+        logger.info(f"Fetching citation count for PMID: {pmid}")
+        response = requests.get(scraper_url, timeout=30)
+
+        if response.status_code != 200:
+            logger.error(f"Failed to fetch data for PMID {pmid}. HTTP {response.status_code}")
+            return None
+
+        # Parse the HTML response
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Locate the "Cited by" link
+        cited_by_link = soup.find("a", string=lambda text: text and text.startswith("Cited by"))
+        if cited_by_link:
+            # Extract the citation count
+            citation_count = int(cited_by_link.text.split("Cited by")[1].strip())
+            logger.info(f"PMID: {pmid} has {citation_count} citations.")
+            return citation_count
+        else:
+            logger.warning(f"No citation count found for PMID {pmid}.")
+            return 0
+    except Exception as e:
+        logger.error(f"Error fetching citation count for PMID {pmid}: {e}")
+        return None
 
 def fetch_pubmed_details(pmids: List[str]) -> List[Dict]:
     """
@@ -132,6 +205,13 @@ def fetch_pubmed_details(pmids: List[str]) -> List[Dict]:
                         pbar.update(1)
                         continue
 
+                    # Extract PMID
+                    pmid_elem = medline_citation.find("PMID")
+                    pmid = pmid_elem.text.strip() if pmid_elem is not None and pmid_elem.text else ''
+                    if not pmid:
+                        pbar.update(1)
+                        continue
+
                     # Extract Publication Year
                     pub_date = medline_citation.find(".//PubDate")
                     year_elem = pub_date.find("Year") if pub_date is not None else None
@@ -177,23 +257,21 @@ def fetch_pubmed_details(pmids: List[str]) -> List[Dict]:
                     journal_elem = medline_citation.find(".//Journal/Title")
                     journal = journal_elem.text.strip() if journal_elem is not None and journal_elem.text else 'No Journal Name'
 
-                    # Extract DOI
-                    doi = None
-                    article_ids = medline_citation.findall(".//ArticleId")
-                    for aid in article_ids:
-                        if aid.attrib.get('IdType') == 'doi':
-                            doi = aid.text.strip()
-                            break
+                    # Extract DOI using the extract_doi_from_pubmed function
+                    doi = extract_doi_from_pubmed(pmid)
+
+                    # Fetch citation count using the fetch_citation_count function
+                    citation_count = fetch_citation_count(pmid)
 
                     articles.append({
-                        "pmid": medline_citation.findtext("PMID", default=""),
+                        "pmid": pmid,
                         "title": title,
                         "authors": authors,
                         "year": year,
                         "abstract": abstract,
                         "journal": journal,
                         "doi": doi,
-                        "citations": None  # Placeholder for citation count
+                        "citations": citation_count
                     })
 
                     pbar.update(1)
@@ -218,91 +296,6 @@ def fetch_pubmed_details(pmids: List[str]) -> List[Dict]:
 
     return articles
 
-def fetch_citation_counts(articles: List[Dict]) -> None:
-    """
-    Fetches citation counts from Europe PMC and OpenAlex for each article using PMID and DOI.
-    Sets 'citations' to None if no citation count is available.
-    """
-    logging.info("Starting to fetch citation counts from Europe PMC and OpenAlex...")
-    europe_pmc_base_url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
-    openalex_base_url = "https://api.openalex.org/works/"
-
-    headers_europe_pmc = {
-        "User-Agent": "PubMedScraper/1.0 (mailto:your_email@example.com)"  # Replace with your email
-    }
-
-    headers_openalex = {
-        "User-Agent": "PubMedScraper/1.0 (mailto:your_email@example.com)",  # Replace with your email
-        "Accept": "application/json"
-    }
-
-    with tqdm(total=len(articles), desc='Fetching citations') as pbar:
-        for article in articles:
-            citation_count = None
-            pmid = article.get("pmid", "")
-            doi = article.get("doi", "")
-
-            # First attempt: Use OpenAlex if DOI is available
-            if doi:
-                # Normalize DOI by lowercasing and removing any whitespace
-                doi_normalized = doi.lower().strip()
-                api_url = f"{openalex_base_url}{doi_normalized}"
-
-                try:
-                    response = requests.get(api_url, headers=headers_openalex, timeout=10)
-                    if response.status_code == 200:
-                        data = response.json()
-                        citation_count = data.get('cited_by_count', 0)
-                    elif response.status_code == 404:
-                        # DOI not found in OpenAlex
-                        citation_count = 0
-                    else:
-                        logging.error(f"OpenAlex API Error {response.status_code} for DOI {doi}: {response.text}")
-                        citation_count = None
-                except requests.exceptions.RequestException as e:
-                    logging.error(f"Error fetching citation count from OpenAlex for DOI {doi}: {e}")
-                    citation_count = None
-
-            # Second attempt: Use Europe PMC if DOI is not available or OpenAlex failed
-            if citation_count is None and pmid:
-                # Construct the query to search for citations of the given PMID
-                # Europe PMC uses "REF_ID:{pmid}" to find articles that cite the given PMID
-                query = f"REF_ID:{pmid}"
-                params = {
-                    "query": query,
-                    "format": "json",
-                    "resulttype": "core",
-                    "pageSize": 0  # We only need the total count
-                }
-
-                try:
-                    response = requests.get(europe_pmc_base_url, params=params, headers=headers_europe_pmc, timeout=10)
-                    response.raise_for_status()
-                    data = response.json()
-                    citation_count = data.get('hitCount', 0)
-                except requests.exceptions.RequestException as e:
-                    logging.error(f"Error fetching citation count from Europe PMC for PMID {pmid}: {e}")
-                    citation_count = None
-                except json.JSONDecodeError as e:
-                    logging.error(f"Error decoding JSON response from Europe PMC for PMID {pmid}: {e}")
-                    citation_count = None
-
-            # Assign the citation count
-            article['citations'] = citation_count
-
-            # Respect rate limits
-            if doi:
-                time.sleep(OPENALEX_SLEEP_INTERVAL)
-            elif pmid:
-                time.sleep(EUROPE_PMC_SLEEP_INTERVAL)
-            else:
-                # If neither DOI nor PMID is available, minimal sleep
-                time.sleep(0.1)
-
-            pbar.update(1)
-
-    logging.info("Completed fetching citation counts from Europe PMC and OpenAlex.")
-
 def save_to_json(data: List[Dict], filename: str) -> None:
     """
     Saves the data to a JSON file.
@@ -318,8 +311,11 @@ def main():
     # Define your search query
     query = '"multiple sclerosis" AND ("social determinants" OR "environmental factors")'
 
+    # Test mode flag
+    test_mode = False  # Set to False to process all articles
+
     # Step 1: Search PubMed and fetch article details
-    pmids = search_pubmed(query, max_results=MAX_RESULTS)
+    pmids = search_pubmed(query, max_results=1 if test_mode else MAX_RESULTS)
     if not pmids:
         logging.error("No PMIDs retrieved. Exiting.")
         return
@@ -329,10 +325,7 @@ def main():
         logging.error("No article details fetched. Exiting.")
         return
 
-    # Step 2: Fetch citation counts from OpenAlex and Europe PMC
-    fetch_citation_counts(articles)
-
-    # Step 3: Save data to JSON
+    # Step 2: Save data to JSON
     output_filename = f'MS_SDoH_pubmed_abstracts_{datetime.now().strftime("%Y%m%d")}.json'
     save_to_json(articles, output_filename)
 
