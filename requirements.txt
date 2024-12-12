@@ -7,5 +7,16 @@ biopython~=1.84
 transformers~=4.46.2
 datasets~=3.1.0
 networkx~=3.4.2
+matplotlib~=3.9.2
+python-dotenv~=1.0.1
+transformers
+torch
+nltk
+seqeval
+spacy
+tqdm
 matplotlib
-python-dotenv
+numpy~=1.26.4
+accelerate~=1.2.0
+beautifulsoup4~=4.12.3
+sentence-transformers

@@ -41,7 +41,7 @@ ENTREZ_SLEEP_INTERVAL = 1 / ENTREZ_RATE_LIMIT
 PUBMED_BATCH_SIZE = 200
 
 # Maximum number of articles to fetch
-MAX_RESULTS = 1000  # Adjust as needed
+MAX_RESULTS = 4000  # Adjust as needed
 
 # ScraperAPI Key (Set your actual ScraperAPI key here)
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")  # Replace with your ScraperAPI key
@@ -309,7 +309,7 @@ def save_to_json(data: List[Dict], filename: str) -> None:
 
 def main():
     # Define your search query
-    query = '"multiple sclerosis" AND ("social determinants" OR "environmental factors")'
+    query = '"multiple sclerosis" AND ("prevention" OR "social determinants" OR "environmental factors" OR "lifestyle factors" OR "modifiable risk factors")'
 
     # Test mode flag
     test_mode = False  # Set to False to process all articles

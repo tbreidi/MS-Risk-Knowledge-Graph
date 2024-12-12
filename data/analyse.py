@@ -3,7 +3,7 @@ import statistics
 import matplotlib.pyplot as plt
 
 # Load the JSON data from the file
-with open('/Users/Tim/PycharmProjects/NII_Oxford_Project/MS_SDoH_pubmed_abstracts_20241127.json', 'r') as file:
+with open('/Users/Tim/PycharmProjects/NII_Oxford_Project/MS_SDoH_pubmed_abstracts_20241129.json', 'r') as file:
     data = json.load(file)
 
 # Initialize a counter and a list to store non-zero citation numbers
