@@ -20,3 +20,4 @@ numpy~=1.26.4
 accelerate~=1.2.0
 beautifulsoup4~=4.12.3
 sentence-transformers
+evaluate
