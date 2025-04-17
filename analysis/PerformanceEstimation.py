@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-exploratory_analysis.py
+PerformanceEstimation.py
 
 Script to reproduce key results from the MS-SDOH KG paper:
 - Print node and edge counts

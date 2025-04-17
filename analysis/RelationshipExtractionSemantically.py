@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
 """
-relation_extraction_pubmedbert.py
-
 Fine-tune PubMedBERT for SDOH-biomedical relationship extraction with
 an additional MLP head as described in the paper.
 
 Usage:
-    python relation_extraction_pubmedbert.py \
+    python relationshipExtractionSemantically.py \
       --train_file train.json --val_file valid.json \
       --model_name microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract \
       --output_dir ./relation_model --epochs 3 --batch_size 16 --lr 2e-5

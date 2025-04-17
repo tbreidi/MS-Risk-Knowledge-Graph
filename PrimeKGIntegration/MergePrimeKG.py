@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """
 merge_kg_with_primekg.py
 
